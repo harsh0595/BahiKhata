@@ -163,7 +163,7 @@ fn parse_rows(g: &grid::Grid, h: usize, c: &Columns, warnings: &mut Vec<String>)
         if row.iter().all(|s| s.trim().is_empty()) {
             continue;
         }
-        let narration = get(row, c.narration).trim().to_string();
+        let narration = get(row, c.narration).replace('\n', " ").trim().to_string();
         let date = parse_date(get(row, c.date));
         let debit = parse_amount(get(row, c.debit)).filter(|a| a.paise != 0);
         let credit = parse_amount(get(row, c.credit)).filter(|a| a.paise != 0);
@@ -208,7 +208,7 @@ fn parse_rows(g: &grid::Grid, h: usize, c: &Columns, warnings: &mut Vec<String>)
                 date,
                 value_date: parse_date(get(row, c.value_date)),
                 narration,
-                reference: get(row, c.reference).trim().to_string(),
+                reference: get(row, c.reference).replace('\n', " ").trim().to_string(),
                 amount: paise,
                 direction,
                 balance,
@@ -219,6 +219,9 @@ fn parse_rows(g: &grid::Grid, h: usize, c: &Columns, warnings: &mut Vec<String>)
 
     if rows.len() >= 2 && rows.first().unwrap().txn.date > rows.last().unwrap().txn.date {
         rows.reverse();
+    }
+    for r in rows.iter_mut() {
+        r.txn.narration = crate::narration::tidy(&r.txn.narration);
     }
 
     // Unsigned "Amount" column without a Dr/Cr marker: work out the direction from the balance.
@@ -262,7 +265,7 @@ static ACCT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\b(?:account\s*(?:no|number|num)|a/?c\s*(?:no|number)?)\b\.?\s*[:\-]?\s*[_']?\s*([0-9Xx*]{6,24})").unwrap()
 });
 static TITLED: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)^(MR|MRS|MS|MISS|DR|SHRI|SMT|M/S)\.?\s+[A-Z][A-Za-z .]{2,60}$").unwrap());
+    LazyLock::new(|| Regex::new(r"(?i)^(MR|MRS|MS|MISS|DR|SHRI|SMT|M/S|MASTER)\.?\s+[A-Z][A-Za-z .]{2,60}$").unwrap());
 
 /// Value for a "Label : value" cell, or the next non-empty cell after a "Label" / "Label :" cell.
 fn labelled(rows: &[Vec<String>], labels: &[&str]) -> Option<String> {
@@ -339,7 +342,12 @@ pub fn parse_statement(bytes: &[u8], file_name: &str) -> Result<ParsedStatement,
     let pre = &g[..h];
     // Some banks repeat details below the table, so look there too.
     let post: Vec<Vec<String>> = g.iter().skip(h + 1).filter(|r| parse_date(get(r, cols.date)).is_none()).cloned().collect();
-    let meta_rows: Vec<Vec<String>> = pre.iter().cloned().chain(post).collect();
+    // A cell can hold several lines ("Master NAME\nemail"); treat each line as its own cell.
+    let meta_rows: Vec<Vec<String>> = pre
+        .iter()
+        .chain(post.iter())
+        .map(|r| r.iter().flat_map(|c| c.split('\n').map(str::to_string).collect::<Vec<_>>()).collect())
+        .collect();
     let text: String = meta_rows.iter().map(|r| r.join(" ")).collect::<Vec<_>>().join("\n");
     let upper = text.to_uppercase();
 

@@ -15,10 +15,31 @@ fn clean(s: &str) -> String {
     s.replace(['\u{a0}', '\r', '\n', '\t'], " ").split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// Text of a spreadsheet cell. SBI wraps long narrations at a fixed width, cutting words in half,
+/// and starts every line with a space, so a line break followed by a space is joined back without
+/// a gap. Other line breaks ("NAME\nemail") are kept as '\n' so the parts stay separate.
+fn clean_cell(s: &str) -> String {
+    let s = s.replace("\r\n", "\n").replace('\r', "\n");
+    let mut joined = String::with_capacity(s.len());
+    for (i, line) in s.split('\n').enumerate() {
+        if i > 0 {
+            match line.strip_prefix(' ') {
+                Some(rest) => {
+                    joined.push_str(rest);
+                    continue;
+                }
+                None => joined.push('\n'),
+            }
+        }
+        joined.push_str(line);
+    }
+    joined.split('\n').map(clean).filter(|l| !l.is_empty()).collect::<Vec<_>>().join("\n")
+}
+
 fn cell_text(c: &Data) -> String {
     match c {
         Data::Empty | Data::Error(_) => String::new(),
-        Data::String(s) => clean(s),
+        Data::String(s) => clean_cell(s),
         Data::Int(i) => i.to_string(),
         Data::Bool(b) => b.to_string(),
         Data::Float(f) => {
@@ -150,6 +171,17 @@ mod tests {
         let g = read(b"<html><table><tr><th>Date</th><th>Narration</th></tr><tr><td>01/04/2025</td><td>A &amp; B<br/>C</td></tr></table>").unwrap();
         assert_eq!(g[0][1], vec!["01/04/2025", "A & B C"]);
         assert_eq!(read(b"%PDF-1.7 ...").err().unwrap(), PDF_NOT_YET);
+    }
+
+    #[test]
+    fn cell_wraps() {
+        assert_eq!(
+            clean_cell(" WDL TFR   UPI/DR/6459/GOLDEN T/YESB/q213\n 547/UPI   0097 AT 10414 X"),
+            "WDL TFR UPI/DR/6459/GOLDEN T/YESB/q213547/UPI 0097 AT 10414 X"
+        );
+        assert_eq!(clean_cell(" ABC \n  DEF"), "ABC DEF");
+        assert_eq!(clean_cell("Master TEST USER\r\nx@y.com"), "Master TEST USER\nx@y.com");
+        assert_eq!(clean_cell("  \n "), "");
     }
 
     #[test]

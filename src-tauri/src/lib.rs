@@ -4,7 +4,7 @@
 use bk_core::analytics::{self, Dashboard, Scope, ScopeOption, TxnPage, TxnQuery};
 use bk_core::import::{parse_statement, ParsedStatement};
 use bk_core::model::*;
-use bk_core::store::{self, ImportPreview, ImportResult};
+use bk_core::store::{self, ImportPreview, ImportResult, ReviewGroup, ReviewSummary};
 use bk_core::vault::{self, KdfParams, VaultKey};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -55,10 +55,12 @@ fn check_password(p: &str) -> R<()> {
     Ok(())
 }
 
-fn open_vault(data: &[u8], password: &str) -> R<Session> {
+/// Decrypts a data file and brings it up to date. The flag is true when it changed and needs saving.
+fn open_vault(data: &[u8], password: &str) -> R<(Session, bool)> {
     let (key, plain) = vault::unlock(data, password)?;
-    let vault: Vault = serde_json::from_slice(&plain).map_err(|e| format!("Data file is damaged: {e}"))?;
-    Ok(Session { key, vault })
+    let mut vault: Vault = serde_json::from_slice(&plain).map_err(|e| format!("Data file is damaged: {e}"))?;
+    let upgraded = vault.upgrade();
+    Ok((Session { key, vault }, upgraded))
 }
 
 // ---------- vault ----------
@@ -101,7 +103,10 @@ async fn create_vault(password: String, st: State<'_, AppState>) -> R<()> {
 async fn unlock(password: String, st: State<'_, AppState>) -> R<()> {
     let password = Zeroizing::new(password);
     let data = std::fs::read(&st.path).map_err(|e| format!("Cannot read data file: {e}"))?;
-    let s = open_vault(&data, &password)?;
+    let (s, upgraded) = open_vault(&data, &password)?;
+    if upgraded {
+        save(&st.path, &s)?;
+    }
     *st.session.lock().map_err(|_| "Internal error")? = Some(s);
     Ok(())
 }
@@ -158,8 +163,11 @@ fn backup_vault(dest: String, st: State<'_, AppState>) -> R<()> {
 async fn restore_vault(src: String, password: String, st: State<'_, AppState>) -> R<()> {
     let password = Zeroizing::new(password);
     let data = std::fs::read(&src).map_err(|e| format!("Cannot read backup: {e}"))?;
-    let s = open_vault(&data, &password)?;
+    let (s, upgraded) = open_vault(&data, &password)?;
     vault::write_atomic(&st.path, &data)?;
+    if upgraded {
+        save(&st.path, &s)?;
+    }
     *st.session.lock().map_err(|_| "Internal error")? = Some(s);
     *st.pending.lock().map_err(|_| "Internal error")? = None;
     Ok(())
@@ -175,7 +183,18 @@ fn get_settings(st: State<'_, AppState>) -> R<Settings> {
 #[tauri::command]
 fn set_settings(settings: Settings, st: State<'_, AppState>) -> R<()> {
     write(&st, |v| {
-        v.settings = Settings { auto_lock_minutes: settings.auto_lock_minutes.clamp(1, 240), ..settings };
+        if v.category(&settings.small_upi_category).is_none() {
+            return Err("Unknown category for small UPI payments.".into());
+        }
+        let regroup = settings.small_upi_max != v.settings.small_upi_max || settings.small_upi_category != v.settings.small_upi_category;
+        v.settings = Settings {
+            auto_lock_minutes: settings.auto_lock_minutes.clamp(1, 240),
+            small_upi_max: settings.small_upi_max.max(0),
+            ..settings
+        };
+        if regroup {
+            store::refresh(v);
+        }
         Ok(())
     })
 }
@@ -350,6 +369,29 @@ fn set_note(id: u64, note: String, st: State<'_, AppState>) -> R<()> {
     write(&st, |v| store::set_note(v, id, &note))
 }
 
+// ---------- review ----------
+
+#[tauri::command]
+fn review_summary(st: State<'_, AppState>) -> R<ReviewSummary> {
+    read(&st, |v| Ok(store::review_summary(v)))
+}
+
+#[tauri::command]
+fn review_groups(guessed: bool, st: State<'_, AppState>) -> R<Vec<ReviewGroup>> {
+    read(&st, |v| Ok(store::review_groups(v, guessed)))
+}
+
+#[tauri::command]
+fn assign_review_group(
+    ids: Vec<u64>,
+    category: String,
+    pattern: Option<String>,
+    direction: Option<Direction>,
+    st: State<'_, AppState>,
+) -> R<usize> {
+    write(&st, |v| store::assign_review_group(v, &ids, &category, pattern.as_deref(), direction))
+}
+
 // ---------- reports ----------
 
 #[tauri::command]
@@ -407,6 +449,9 @@ pub fn run() {
             set_category,
             reset_category,
             set_note,
+            review_summary,
+            review_groups,
+            assign_review_group,
             scope_options,
             dashboard,
             export_excel,

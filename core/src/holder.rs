@@ -70,6 +70,43 @@ pub fn names_match(a: &str, b: &str) -> bool {
     exact >= 2
 }
 
+/// Words that appear next to a name in transfer narrations ("HARSH SHARMA SBI") but are not part of it.
+const NOT_NAME: &[&str] = &[
+    "SBI", "HDFC", "ICICI", "AXIS", "KOTAK", "BANK", "YES", "IDFC", "FIRST", "PNB", "BOB", "CANARA", "UNION", "INDUSIND",
+    "FEDERAL", "SAVINGS", "SAVING", "SB", "AC", "ACC", "ACCOUNT", "SELF", "OWN", "LTD",
+];
+
+/// True when a transfer's counterparty is the account holder themself. Every word of the holder's
+/// name must be present (initials and cut-off words count) and at least two must match exactly.
+/// A shorter form such as "HARSH SHARMA" is not accepted for "HARSH YOGESH SHARMA", because banks
+/// print names in different orders and "YOGESH SHARMA" (the father) could not be told apart.
+pub fn is_self(counterparty: &str, holder: &str) -> bool {
+    let h = name_tokens(holder);
+    let c: Vec<String> = name_tokens(counterparty).into_iter().filter(|t| !NOT_NAME.contains(&t.as_str())).collect();
+    if h.len() < 2 || c.len() != h.len() {
+        return false;
+    }
+    let mut used = vec![false; h.len()];
+    let mut exact = 0;
+    let mut pending = Vec::new();
+    for t in &c {
+        match (0..h.len()).find(|&i| !used[i] && &h[i] == t) {
+            Some(i) => {
+                used[i] = true;
+                exact += 1;
+            }
+            None => pending.push(t),
+        }
+    }
+    for t in pending {
+        match (0..h.len()).find(|&i| !used[i] && h[i].starts_with(t.as_str())) {
+            Some(i) => used[i] = true,
+            None => return false,
+        }
+    }
+    exact >= 2
+}
+
 pub fn normalize_pan(p: &str) -> Option<String> {
     let p: String = p.chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>().to_uppercase();
     let b = p.as_bytes();
@@ -149,6 +186,22 @@ mod tests {
         assert!(!names_match("HARSH SHARMA", "PRIYA SHARMA"));
         assert!(!names_match("", "HARSH SHARMA"));
         assert_eq!(clean_name("MR HARSH  SHARMA"), "Harsh Sharma");
+    }
+
+    #[test]
+    fn self_name() {
+        let h = "Harsh Yogesh Sharma";
+        assert!(is_self("HARSH YOGESH SHARMA", h));
+        assert!(is_self("SHARMA HARSH YOGESH", h));
+        assert!(is_self("Master HARSH YOGESH SH", h));
+        assert!(is_self("HARSH Y SHARMA SBI", h));
+        assert!(!is_self("Yogesh S", h));
+        assert!(!is_self("YOGESH SHARMA", h));
+        assert!(!is_self("MANJU YOGESH SHARMA", h));
+        assert!(!is_self("MRS. MANJU YOGESH SHARMA", h));
+        assert!(!is_self("SHARMA H", h));
+        assert!(is_self("HARSH SHARMA HDFC", "Harsh Sharma"));
+        assert!(!is_self("PRIYA SHARMA", "Harsh Sharma"));
     }
 
     #[test]

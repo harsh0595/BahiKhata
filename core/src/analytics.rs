@@ -381,6 +381,8 @@ pub struct TxnQuery {
     pub kind: Option<CatKind>,
     pub direction: Option<Direction>,
     pub month: Option<String>,
+    /// Only transactions whose category came this way (e.g. auto-guessed).
+    pub source: Option<CatSource>,
     #[serde(default)]
     pub sort: String,
     #[serde(default)]
@@ -453,6 +455,7 @@ pub fn matching<'a>(v: &'a Vault, q: &TxnQuery) -> Vec<&'a Txn> {
         .filter(|t| q.kind.map(|k| effective_kind(v, &t.category) == k).unwrap_or(true))
         .filter(|t| q.direction.map(|d| t.direction == d).unwrap_or(true))
         .filter(|t| q.month.as_deref().map(|m| month_key(t.date) == m).unwrap_or(true))
+        .filter(|t| q.source.map(|s| t.source == s).unwrap_or(true))
         .filter(|t| {
             search.is_empty()
                 || amount == Some(t.amount)

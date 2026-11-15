@@ -1,7 +1,7 @@
 //! Operations on the vault: importing statements, editing categories and rules, accounts,
 //! and pairing transfers between the user's own accounts.
 
-use crate::categorize::{recategorize_all, Categorizer, OWN_TRANSFER};
+use crate::categorize::{recategorize_all, Categorizer, Facts, Guesser, FALLBACK_CREDIT, FALLBACK_DEBIT, OWN_TRANSFER, REVERSAL};
 use crate::holder::{self, names_match};
 use crate::import::{normalize_account, ParsedStatement};
 use crate::model::*;
@@ -105,6 +105,8 @@ pub fn preview(v: &Vault, s: &ParsedStatement, file_name: &str) -> ImportPreview
         None => HashSet::new(),
     };
     let cz = Categorizer::new(&v.rules, &v.categories);
+    let guesser = Guesser::new(v);
+    let holder_name = existing.and_then(|id| v.account(id)).map(|a| a.holder.clone()).unwrap_or_else(|| s.holder.clone());
     let keys = keys_for(s);
     let mut rows = Vec::new();
     let (mut new_count, mut debits, mut credits) = (0, 0, 0);
@@ -117,12 +119,28 @@ pub fn preview(v: &Vault, s: &ParsedStatement, file_name: &str) -> ImportPreview
                 Direction::Credit => credits += t.amount,
             }
         }
+        let info = narration::analyze(&t.narration, &t.reference);
+        let facts = Facts {
+            narration: &t.narration,
+            direction: t.direction,
+            amount: t.amount,
+            channel: info.channel,
+            merchant: &info.merchant,
+            vpa: info.vpa.as_deref(),
+            holder: &holder_name,
+        };
+        let (mut category, source, _) = cz.classify(&facts);
+        if source == CatSource::Default {
+            if let Some(g) = guesser.guess(&facts) {
+                category = g;
+            }
+        }
         rows.push(PreviewRow {
             date: t.date,
             narration: t.narration.clone(),
             amount: t.amount,
             direction: t.direction,
-            category: cz.categorize(&t.narration, t.direction).0,
+            category,
             duplicate: dup,
         });
     }
@@ -203,7 +221,6 @@ pub fn commit(v: &mut Vault, s: &ParsedStatement, file_name: &str, holder_overri
     };
 
     let have: HashSet<String> = v.txns.iter().filter(|t| t.account_id == account_id).map(|t| t.key.clone()).collect();
-    let cz = Categorizer::new(&v.rules, &v.categories);
     let import_id = v.alloc_id();
     let keys = keys_for(s);
     let mut added = 0;
@@ -212,7 +229,7 @@ pub fn commit(v: &mut Vault, s: &ParsedStatement, file_name: &str, holder_overri
             continue;
         }
         let info = narration::analyze(&t.narration, &t.reference);
-        let (category, source, rule_id) = cz.categorize(&t.narration, t.direction);
+        let category = if t.direction == Direction::Debit { FALLBACK_DEBIT } else { FALLBACK_CREDIT };
         let id = v.alloc_id();
         v.txns.push(Txn {
             id,
@@ -227,9 +244,9 @@ pub fn commit(v: &mut Vault, s: &ParsedStatement, file_name: &str, holder_overri
             merchant: info.merchant,
             vpa: info.vpa,
             channel: info.channel.to_string(),
-            category,
-            source,
-            rule_id,
+            category: category.to_string(),
+            source: CatSource::Default,
+            rule_id: None,
             key,
             import_id,
             note: String::new(),
@@ -248,28 +265,86 @@ pub fn commit(v: &mut Vault, s: &ParsedStatement, file_name: &str, holder_overri
         skipped,
     });
     v.txns.sort_by(|a, b| (a.date, a.account_id, a.id).cmp(&(b.date, b.account_id, b.id)));
-    detect_transfers(v);
+    refresh(v);
     Ok(ImportResult { account_id, import_id, added, skipped })
 }
 
 const TRANSFER_CHANNELS: &[&str] = &["UPI", "NEFT", "RTGS", "IMPS", "OTHER", "CHEQUE"];
 
-/// Pairs a debit in one account with a credit of the same amount in another account of the same
-/// holder within 3 days, and marks both as own-account transfers. Re-run after every change.
-pub fn detect_transfers(v: &mut Vault) -> usize {
-    let cz = Categorizer::new(&v.rules, &v.categories);
+/// Brings every automatic category up to date: rules, guesses, reversed payments and transfers
+/// between the user's own accounts. Run after every change to transactions, rules, categories or
+/// accounts. Categories set by hand are kept.
+pub fn refresh(v: &mut Vault) {
     for t in v.txns.iter_mut().filter(|t| t.source == CatSource::Transfer) {
-        let (c, s, r) = cz.categorize(&t.narration, t.direction);
-        t.category = c;
-        t.source = s;
-        t.rule_id = r;
+        t.source = CatSource::Default;
     }
+    recategorize_all(v);
+    pair_reversals(v);
+    pair_transfers(v);
+}
+
+/// Digit runs that identify a payment (UTR, RRN, IMPS reference), from narration and reference.
+/// Mobile numbers are left out because many payments to the same person carry them.
+fn ref_numbers(t: &Txn) -> HashSet<String> {
+    let mut out = HashSet::new();
+    for text in [&t.narration, &t.reference] {
+        for run in text.split(|c: char| !c.is_ascii_digit()).filter(|r| r.len() >= 9) {
+            let mobile = run.len() == 10 && matches!(run.as_bytes()[0], b'6'..=b'9');
+            if !mobile {
+                out.insert(run.trim_start_matches('0').to_string());
+            }
+        }
+    }
+    out.retain(|r| r.len() >= 9);
+    out
+}
+
+/// A failed or returned payment shows as a debit and a credit of the same amount in the same
+/// account a few days apart, carrying the same reference number. Both are excluded from totals.
+fn pair_reversals(v: &mut Vault) -> usize {
+    if v.category(REVERSAL).is_none() {
+        return 0;
+    }
+    let free = |t: &Txn| !matches!(t.source, CatSource::User | CatSource::Transfer);
+    let refs: Vec<HashSet<String>> = v.txns.iter().map(ref_numbers).collect();
+    let mut credits: Vec<usize> =
+        (0..v.txns.len()).filter(|&i| v.txns[i].direction == Direction::Credit && free(&v.txns[i]) && !refs[i].is_empty()).collect();
+    let debits: Vec<usize> =
+        (0..v.txns.len()).filter(|&i| v.txns[i].direction == Direction::Debit && free(&v.txns[i]) && !refs[i].is_empty()).collect();
+    let mut pairs = 0;
+    for d in debits {
+        let dt = &v.txns[d];
+        let found = credits.iter().position(|&c| {
+            let ct = &v.txns[c];
+            let days = (ct.date - dt.date).num_days();
+            ct.account_id == dt.account_id && ct.amount == dt.amount && (0..=7).contains(&days) && !refs[c].is_disjoint(&refs[d])
+        });
+        if let Some(pos) = found {
+            let c = credits.remove(pos);
+            for i in [d, c] {
+                v.txns[i].category = REVERSAL.to_string();
+                v.txns[i].source = CatSource::Transfer;
+                v.txns[i].rule_id = None;
+            }
+            pairs += 1;
+        }
+    }
+    pairs
+}
+
+/// Pairs a debit in one account with a credit of the same amount in another account of the same
+/// holder within 3 days, and marks both as own-account transfers.
+fn pair_transfers(v: &mut Vault) -> usize {
     if v.category(OWN_TRANSFER).is_none() {
         return 0;
     }
     let mut pairs = 0;
     for group in holder::groups(&v.accounts).into_iter().filter(|g| g.len() > 1) {
-        let eligible = |t: &Txn| group.contains(&t.account_id) && t.source != CatSource::User && TRANSFER_CHANNELS.contains(&t.channel.as_str());
+        let eligible = |t: &Txn| {
+            group.contains(&t.account_id)
+                && !matches!(t.source, CatSource::User | CatSource::Transfer)
+                && TRANSFER_CHANNELS.contains(&t.channel.as_str())
+        };
         let debits: Vec<usize> = (0..v.txns.len()).filter(|&i| eligible(&v.txns[i]) && v.txns[i].direction == Direction::Debit).collect();
         let mut credits: Vec<usize> = (0..v.txns.len()).filter(|&i| eligible(&v.txns[i]) && v.txns[i].direction == Direction::Credit).collect();
         for d in debits {
@@ -312,7 +387,7 @@ pub fn set_category(v: &mut Vault, txn_ids: &[u64], category: &str) -> Result<us
         t.rule_id = None;
         n += 1;
     }
-    detect_transfers(v);
+    refresh(v);
     Ok(n)
 }
 
@@ -324,8 +399,7 @@ pub fn reset_category(v: &mut Vault, txn_ids: &[u64]) -> usize {
         t.source = CatSource::Default;
         n += 1;
     }
-    recategorize_all(v);
-    detect_transfers(v);
+    refresh(v);
     n
 }
 
@@ -353,8 +427,7 @@ pub fn add_rule(v: &mut Vault, pattern: &str, category: &str, direction: Option<
     }
     let id = v.alloc_id();
     v.rules.push(Rule { id, pattern: pattern.trim().to_string(), category: category.to_string(), direction, created: now_string() });
-    recategorize_all(v);
-    detect_transfers(v);
+    refresh(v);
     Ok(id)
 }
 
@@ -364,8 +437,7 @@ pub fn delete_rule(v: &mut Vault, id: u64) -> Result<(), String> {
     if v.rules.len() == before {
         return Err("Rule not found".into());
     }
-    recategorize_all(v);
-    detect_transfers(v);
+    refresh(v);
     Ok(())
 }
 
@@ -425,8 +497,7 @@ pub fn delete_category(v: &mut Vault, id: &str) -> Result<(), String> {
     for t in v.txns.iter_mut().filter(|t| t.category == id) {
         t.source = CatSource::Default;
     }
-    recategorize_all(v);
-    detect_transfers(v);
+    refresh(v);
     Ok(())
 }
 
@@ -439,7 +510,7 @@ pub fn update_account(v: &mut Vault, id: u64, nickname: &str, holder: Option<&st
         }
         a.holder = holder::clean_name(h);
     }
-    detect_transfers(v);
+    refresh(v);
     Ok(())
 }
 
@@ -450,7 +521,7 @@ pub fn delete_account(v: &mut Vault, id: u64) -> Result<(), String> {
     v.accounts.retain(|a| a.id != id);
     v.txns.retain(|t| t.account_id != id);
     v.imports.retain(|i| i.account_id != id);
-    detect_transfers(v);
+    refresh(v);
     Ok(())
 }
 
@@ -462,8 +533,139 @@ pub fn delete_import(v: &mut Vault, import_id: u64) -> Result<usize, String> {
     let before = v.txns.len();
     v.txns.retain(|t| t.import_id != import_id);
     v.imports.retain(|i| i.id != import_id);
-    detect_transfers(v);
+    refresh(v);
     Ok(before - v.txns.len())
+}
+
+/// Payments to or from one payee that need the user's attention, shown together so one answer
+/// covers all of them.
+#[derive(Serialize, Debug, Clone)]
+pub struct ReviewGroup {
+    pub key: String,
+    pub label: String,
+    /// Text to save as a rule so future payments to this payee get the same category; empty when
+    /// the narration has nothing stable to match.
+    pub pattern: String,
+    pub direction: Direction,
+    pub count: usize,
+    pub total: Paise,
+    pub first: NaiveDate,
+    pub last: NaiveDate,
+    pub samples: Vec<String>,
+    pub txn_ids: Vec<u64>,
+    pub category: String,
+}
+
+#[derive(Serialize, Debug, Clone, PartialEq)]
+pub struct ReviewSummary {
+    /// Transactions no rule or guess could categorise.
+    pub uncategorized: usize,
+    pub uncategorized_groups: usize,
+    /// Transactions whose category was guessed.
+    pub guessed: usize,
+    pub guessed_groups: usize,
+}
+
+/// `guessed = false`: transactions left in the fallback category; `true`: auto-guessed ones.
+/// Largest totals first.
+pub fn review_groups(v: &Vault, guessed: bool) -> Vec<ReviewGroup> {
+    let want = if guessed { CatSource::Auto } else { CatSource::Default };
+    let holders: HashMap<u64, &str> = v.accounts.iter().map(|a| (a.id, a.holder.as_str())).collect();
+    let mut groups: Vec<ReviewGroup> = Vec::new();
+    let mut index: HashMap<(Direction, String, String), usize> = HashMap::new();
+    for t in v.txns.iter().filter(|t| t.source == want) {
+        let facts = Facts::of(t, holders.get(&t.account_id).copied().unwrap_or(""));
+        let payee = facts.payee();
+        let key = if payee.chars().filter(|c| c.is_ascii_alphanumeric()).count() >= 3 {
+            payee
+        } else {
+            let text: String = t.narration.chars().filter(|c| !c.is_ascii_digit()).collect();
+            crate::categorize::normalize(&text).trim().to_string()
+        };
+        let slot = *index.entry((t.direction, key.clone(), t.category.clone())).or_insert_with(|| {
+            let label = if !t.merchant.is_empty() {
+                t.merchant.clone()
+            } else if let Some(vpa) = &t.vpa {
+                vpa.clone()
+            } else {
+                t.narration.chars().take(40).collect()
+            };
+            groups.push(ReviewGroup {
+                key: format!("{}|{}|{}", if t.direction == Direction::Debit { "D" } else { "C" }, t.category, key),
+                label,
+                pattern: narration::payee_pattern(&t.narration, &t.merchant, t.vpa.as_deref()),
+                direction: t.direction,
+                count: 0,
+                total: 0,
+                first: t.date,
+                last: t.date,
+                samples: Vec::new(),
+                txn_ids: Vec::new(),
+                category: t.category.clone(),
+            });
+            groups.len() - 1
+        });
+        let g = &mut groups[slot];
+        g.count += 1;
+        g.total += t.amount;
+        g.first = g.first.min(t.date);
+        g.last = g.last.max(t.date);
+        g.txn_ids.push(t.id);
+        if g.samples.len() < 3 && !g.samples.contains(&t.narration) {
+            g.samples.push(t.narration.clone());
+        }
+    }
+    // Only offer a pattern that really matches every transaction in the group.
+    let by_id: HashMap<u64, &Txn> = v.txns.iter().map(|t| (t.id, t)).collect();
+    for g in groups.iter_mut() {
+        let pat = crate::categorize::normalize(&g.pattern).trim().to_string();
+        let ok = pat.len() >= 3
+            && g.txn_ids.iter().all(|id| crate::categorize::pattern_matches(&crate::categorize::normalize(&by_id[id].narration), &pat));
+        if !ok {
+            g.pattern.clear();
+        }
+    }
+    groups.sort_by(|a, b| b.total.cmp(&a.total).then_with(|| a.label.cmp(&b.label)));
+    groups
+}
+
+pub fn review_summary(v: &Vault) -> ReviewSummary {
+    let count = |s: CatSource| v.txns.iter().filter(|t| t.source == s).count();
+    ReviewSummary {
+        uncategorized: count(CatSource::Default),
+        uncategorized_groups: review_groups(v, false).len(),
+        guessed: count(CatSource::Auto),
+        guessed_groups: review_groups(v, true).len(),
+    }
+}
+
+/// Give a reviewed group a category. With a pattern, a rule is saved so the payee's other and
+/// future transactions get the same category; any that the rule does not cover are set by hand.
+pub fn assign_review_group(
+    v: &mut Vault,
+    txn_ids: &[u64],
+    category: &str,
+    pattern: Option<&str>,
+    direction: Option<Direction>,
+) -> Result<usize, String> {
+    require_category(v, category)?;
+    if let Some(p) = pattern.map(str::trim).filter(|p| crate::categorize::normalize(p).trim().len() >= 3) {
+        let id = v.alloc_id();
+        v.rules.push(Rule { id, pattern: p.to_string(), category: category.to_string(), direction, created: now_string() });
+        refresh(v);
+    }
+    let ids: HashSet<u64> = txn_ids.iter().copied().collect();
+    let mut n = 0;
+    for t in v.txns.iter_mut().filter(|t| ids.contains(&t.id)) {
+        n += 1;
+        if t.category != category || !matches!(t.source, CatSource::Rule | CatSource::User) {
+            t.category = category.to_string();
+            t.source = CatSource::User;
+            t.rule_id = None;
+        }
+    }
+    refresh(v);
+    Ok(n)
 }
 
 #[cfg(test)]
@@ -558,7 +760,7 @@ mod tests {
         let mut v = Vault::new();
         let s = stmt("SBI", "12345678901", "A B", vec![
             ("2025-04-01", "UPI/DR/1/RAMESH KIRANA/x@ybl", 10000, Direction::Debit),
-            ("2025-04-02", "UPI/DR/2/SURESH/suresh@ybl", 20000, Direction::Debit),
+            ("2025-04-02", "UPI/DR/2/SURESH/suresh@ybl", 50000, Direction::Debit),
         ]);
         commit(&mut v, &s, "x", None).unwrap();
         assert_eq!(v.txns[1].category, "other");
@@ -580,5 +782,54 @@ mod tests {
         assert!(v.rules.is_empty());
         assert_eq!(v.txns[1].category, "other");
         assert!(add_rule(&mut v, "a", "food", None).is_err());
+    }
+
+    #[test]
+    fn reversed_payment_excluded() {
+        let mut v = Vault::new();
+        let s = stmt("SBI", "12345678901", "A B", vec![
+            ("2025-04-01", "TO TRANSFER-NEFT*SBIN226162844623*ACME TRADERS", 2_500_000, Direction::Debit),
+            ("2025-04-03", "BY TRANSFER-NEFTRRSBIN226162844623 RETURN", 2_500_000, Direction::Credit),
+            // Same amount back, but a different reference: a real payment, not a reversal.
+            ("2025-04-04", "TO TRANSFER-NEFT*SBIN226162849999*RAVI", 1_000_000, Direction::Debit),
+            ("2025-04-05", "BY TRANSFER-NEFT*SBIN226162850000*RAVI", 1_000_000, Direction::Credit),
+        ]);
+        commit(&mut v, &s, "x", None).unwrap();
+        let cats: Vec<&str> = v.txns.iter().map(|t| t.category.as_str()).collect();
+        assert_eq!(&cats[..2], &[REVERSAL, REVERSAL]);
+        assert!(cats[2..].iter().all(|c| *c != REVERSAL));
+    }
+
+    #[test]
+    fn review_and_assign() {
+        let mut v = Vault::new();
+        let s = stmt("SBI", "12345678901", "A B", vec![
+            ("2025-04-01", "UPI/DR/401234567890/SURESH K/SBIN/suresh1234/Payment", 2_500_00, Direction::Debit),
+            ("2025-04-09", "UPI/DR/401234567891/SURESH K/SBIN/suresh1234/Payment", 3_000_00, Direction::Debit),
+            ("2025-04-10", "UPI/DR/401234567892/RAMU/YESB/paytmqr281/Payment", 80_00, Direction::Debit),
+            ("2025-04-11", "CASH DEPOSIT", 10_000_00, Direction::Credit),
+        ]);
+        commit(&mut v, &s, "x", None).unwrap();
+        let sum = review_summary(&v);
+        assert_eq!((sum.uncategorized, sum.uncategorized_groups, sum.guessed, sum.guessed_groups), (3, 2, 1, 1));
+        let groups = review_groups(&v, false);
+        let suresh = groups.iter().find(|g| g.count == 2).unwrap();
+        assert_eq!((suresh.label.as_str(), suresh.pattern.as_str(), suresh.total), ("SURESH K", "SURESH K/SBIN/SURESH1234", 5_500_00));
+        let ids = suresh.txn_ids.clone();
+        let pattern = suresh.pattern.clone();
+        add_category(&mut v, "Maid", CatKind::Expense, "#123456").unwrap();
+        assert_eq!(assign_review_group(&mut v, &ids, "u_maid", Some(&pattern), Some(Direction::Debit)).unwrap(), 2);
+        assert_eq!(v.rules.len(), 1);
+        assert!(v.txns.iter().filter(|t| ids.contains(&t.id)).all(|t| t.category == "u_maid" && t.source == CatSource::Rule));
+        // A future payment to the same payee follows the rule.
+        let s2 = stmt("SBI", "12345678901", "A B", vec![("2025-05-01", "UPI/DR/401234567899/SURESH K/SBIN/suresh1234/Payment", 2_500_00, Direction::Debit)]);
+        commit(&mut v, &s2, "y", None).unwrap();
+        assert_eq!(v.txns.last().unwrap().category, "u_maid");
+        // Without a pattern the choice is kept by hand.
+        let cash = review_groups(&v, false)[0].txn_ids.clone();
+        assign_review_group(&mut v, &cash, "family", None, None).unwrap();
+        let t = v.txns.iter().find(|t| t.id == cash[0]).unwrap();
+        assert_eq!((t.category.as_str(), t.source), ("family", CatSource::User));
+        assert_eq!(review_summary(&v).uncategorized, 0);
     }
 }

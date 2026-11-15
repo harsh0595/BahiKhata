@@ -39,8 +39,11 @@ pub enum CatSource {
     Rule,
     /// The user set it by hand; never overwritten automatically.
     User,
-    /// Detected as a transfer between the user's own accounts.
+    /// Detected as a transfer between the user's own accounts, or a payment and its reversal.
     Transfer,
+    /// Guessed by a heuristic (small UPI payment, same payee as other transactions, own name).
+    /// Shown as "auto-guessed" so the user can confirm or change it.
+    Auto,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -109,11 +112,30 @@ pub struct ImportRecord {
 pub struct Settings {
     pub investments_as_expense: bool,
     pub auto_lock_minutes: u32,
+    /// UPI payments up to this amount that match no rule are treated as small local purchases
+    /// (street vegetable and fruit vendors). 0 turns this off.
+    #[serde(default = "default_small_upi_max")]
+    pub small_upi_max: Paise,
+    #[serde(default = "default_small_upi_category")]
+    pub small_upi_category: String,
+}
+
+fn default_small_upi_max() -> Paise {
+    300_00
+}
+
+fn default_small_upi_category() -> String {
+    "groceries".into()
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { investments_as_expense: false, auto_lock_minutes: 15 }
+        Settings {
+            investments_as_expense: false,
+            auto_lock_minutes: 15,
+            small_upi_max: default_small_upi_max(),
+            small_upi_category: default_small_upi_category(),
+        }
     }
 }
 
@@ -133,7 +155,7 @@ pub struct Vault {
 impl Vault {
     pub fn new() -> Self {
         Vault {
-            version: 1,
+            version: 2,
             next_id: 1,
             accounts: Vec::new(),
             txns: Vec::new(),
@@ -142,6 +164,32 @@ impl Vault {
             imports: Vec::new(),
             settings: Settings::default(),
         }
+    }
+
+    /// Brings a vault saved by an older version up to date: adds built-in categories that did not
+    /// exist then and re-runs categorisation. Returns true when something changed.
+    pub fn upgrade(&mut self) -> bool {
+        let mut changed = false;
+        for c in crate::categorize::default_categories() {
+            if self.category(&c.id).is_none() {
+                self.categories.push(c);
+                changed = true;
+            }
+        }
+        if self.version < 2 {
+            self.version = 2;
+            for t in self.txns.iter_mut() {
+                let info = crate::narration::analyze(&t.narration, &t.reference);
+                t.merchant = info.merchant;
+                t.vpa = info.vpa;
+                t.channel = info.channel.to_string();
+            }
+            changed = true;
+        }
+        if changed {
+            crate::store::refresh(self);
+        }
+        changed
     }
 
     pub fn alloc_id(&mut self) -> u64 {
