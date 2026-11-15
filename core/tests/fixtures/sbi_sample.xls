@@ -1,0 +1,24 @@
+Account Name       :	Mr. HARSH SHARMA
+Address            :	FLAT 1 SAMPLE BUILDING
+                   	MUMBAI
+Date               :	15 Nov 2026
+Account Number     :	_00000031234567890
+Account Description:	REGULAR SB CHQ-INDIVIDUALS
+Branch             :	ANDHERI
+Drawing Power      :	0.00
+Interest Rate(% p.a.):	2.7
+CIF No.            :	_12345678901
+IFS Code           :	SBIN0001234
+MICR Code          :	400002000
+Balance as on 1 Apr 2025 :	10,000.00
+
+Account Statement from 1 Apr 2025 to 31 May 2025
+
+Txn Date	Value Date	Description	Ref No./Cheque No.	        Debit	Credit	Balance
+2 May 2025	2 May 2025	BY TRANSFER-NEFT*ICIC0000001*N12345*ACME LTD*SALARY	TRANSFER FROM 3199	 	85,000.00	93,220.00
+30 Apr 2025	30 Apr 2025	CREDIT INTEREST	 	 	70.00	8,220.00
+10 Apr 2025	10 Apr 2025	ATM WDL-ATM CASH 1234 ANDHERI	 	2,000.00	 	8,150.00
+2 Apr 2025	2 Apr 2025	TO TRANSFER-UPI/DR/627412345678/SWIGGY/ICIC/swiggy@icici/Payment	TRANSFER TO 4897	"350.00"	 	10,150.00
+1 Apr 2025	1 Apr 2025	DEP TFR UPI/CR/512345678901/RAHUL KUMAR/HDFC/rahul@okhdfc/Lunch	TRANSFER FROM 4897	 	500.00	10,500.00
+
+**This is a computer generated statement and does not require a signature.

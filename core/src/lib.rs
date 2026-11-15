@@ -1,9 +1,15 @@
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+//! Bahi-Khata core: statement import, categorisation, analytics, encrypted vault and export.
+//! Kept free of Tauri so it can be unit-tested quickly.
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn version_set() {
-        assert!(!super::VERSION.is_empty());
-    }
-}
+pub mod analytics;
+pub mod categorize;
+pub mod export;
+pub mod holder;
+pub mod import;
+pub mod model;
+pub mod money;
+pub mod narration;
+pub mod store;
+pub mod vault;
+
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
