@@ -22,6 +22,7 @@ const STOP: &[&str] = &[
     "PUNB", "KKBK", "BARB", "IDIB", "CNRB", "UBIN", "BKID", "IOBA", "INDB", "FDRL", "IDFB", "AIRP", "PYTM", "ICICI",
     "AXIS", "SBI", "HDFC BANK", "YES BANK", "KOTAK", "AXIS BANK", "STATE BANK OF INDIA", "ICICI BANK", "PAYTM",
     "BHIM", "MOBILE BANKING", "NET BANKING", "NETBANKING", "NETBANK", "INET", "MMT", "IMPS P2A", "FROM", "TO", "BY",
+    "DEP", "WDL",
 ];
 
 fn is_stop(t: &str) -> bool {
@@ -123,7 +124,7 @@ pub fn analyze(narration: &str, reference: &str) -> NarrInfo {
                 start += 1;
             }
             let candidate = words[start..].join(" ");
-            if !candidate.is_empty() && name_like(&candidate) {
+            if !candidate.is_empty() && name_like(&candidate) && !candidate.split(' ').all(is_stop) {
                 found = Some(candidate);
                 break;
             }
