@@ -1,13 +1,14 @@
-import { api, errText, type Category, type Scope, type ScopeOption } from "./api";
+import { api, errText, type CatSource, type Category, type ReviewSummary, type Scope, type ScopeOption } from "./api";
 import { PRESETS } from "./format";
 
-export type Page = "dashboard" | "transactions" | "import" | "accounts" | "categories" | "settings" | "report";
+export type Page = "dashboard" | "transactions" | "review" | "import" | "accounts" | "categories" | "settings" | "report";
 
 export interface TxnFilter {
   category: string | null;
   kind: string | null;
   month: string | null;
   search: string;
+  source?: CatSource | null;
 }
 
 class AppStore {
@@ -19,6 +20,7 @@ class AppStore {
   from = $state<string | null>(null);
   to = $state<string | null>(null);
   categories = $state<Category[]>([]);
+  review = $state<ReviewSummary>({ uncategorized: 0, uncategorized_groups: 0, guessed: 0, guessed_groups: 0 });
   /** Bumped after every change so pages reload their data. */
   version = $state(0);
   toast = $state<{ text: string; error: boolean } | null>(null);
@@ -56,9 +58,10 @@ class AppStore {
 
   async loadMeta() {
     const prev = this.scopeOptions[this.scopeIndex];
-    const [opts, cats] = await Promise.all([api.scopeOptions(), api.categories()]);
+    const [opts, cats, review] = await Promise.all([api.scopeOptions(), api.categories(), api.reviewSummary()]);
     this.scopeOptions = opts;
     this.categories = cats;
+    this.review = review;
     const key = prev ? prev.accounts.join(",") : "";
     const i = opts.findIndex((o) => o.accounts.join(",") === key);
     this.scopeIndex = i >= 0 ? i : 0;
@@ -74,7 +77,7 @@ class AppStore {
   }
 
   showTxns(f: Partial<TxnFilter>) {
-    this.txnFilter = { category: null, kind: null, month: null, search: "", ...f };
+    this.txnFilter = { category: null, kind: null, month: null, search: "", source: null, ...f };
     this.page = "transactions";
   }
 
@@ -98,6 +101,7 @@ class AppStore {
     this.scopeOptions = [];
     this.scopeIndex = 0;
     this.categories = [];
+    this.review = { uncategorized: 0, uncategorized_groups: 0, guessed: 0, guessed_groups: 0 };
     this.setPreset("all");
   }
 }

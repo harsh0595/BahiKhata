@@ -122,5 +122,6 @@ export const SOURCE_LABEL: Record<string, string> = {
   default: "No rule matched",
   rule: "Matched a rule",
   user: "Set by you",
-  transfer: "Own-account transfer",
+  transfer: "Own-account transfer or reversed payment",
+  auto: "Auto-guessed (check in Review)",
 };

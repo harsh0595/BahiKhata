@@ -111,6 +111,38 @@
   </div>
 
   <div class="card">
+    <h2>Automatic guesses</h2>
+    {#if settings}
+      <label class="field" style="max-width:260px">
+        <span>Small UPI payments up to (₹, 0 = off)</span>
+        <input
+          type="number"
+          min="0"
+          step="10"
+          value={settings.small_upi_max / 100}
+          onchange={(e) => {
+            if (!settings) return;
+            settings.small_upi_max = Math.max(0, Math.round(Number(e.currentTarget.value) * 100));
+            saveSettings();
+          }}
+        />
+      </label>
+      <label class="field" style="max-width:260px">
+        <span>are guessed as</span>
+        <select bind:value={settings.small_upi_category} onchange={saveSettings}>
+          {#each app.categories.filter((c) => c.kind === "expense") as c (c.id)}
+            <option value={c.id}>{c.name}</option>
+          {/each}
+        </select>
+      </label>
+      <p class="muted small">
+        For UPI payments that match no rule, such as street vegetable and fruit vendors. Guesses are marked "auto-guessed"
+        and can be checked on the Review page.
+      </p>
+    {/if}
+  </div>
+
+  <div class="card">
     <h2>Change password</h2>
     <label class="field"><span>Current password</span><input type="password" bind:value={pw.current} /></label>
     <label class="field"><span>New password (at least 8 characters)</span><input type="password" bind:value={pw.next} /></label>

@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 export type Paise = number;
 export type Direction = "debit" | "credit";
 export type CatKind = "expense" | "income" | "investment" | "excluded";
-export type CatSource = "default" | "rule" | "user" | "transfer";
+export type CatSource = "default" | "rule" | "user" | "transfer" | "auto";
 
 export interface Status {
   exists: boolean;
@@ -16,6 +16,30 @@ export interface Status {
 export interface Settings {
   investments_as_expense: boolean;
   auto_lock_minutes: number;
+  /** UPI payments up to this amount (paise) that no rule matches are guessed as small local purchases; 0 = off. */
+  small_upi_max: Paise;
+  small_upi_category: string;
+}
+
+export interface ReviewGroup {
+  key: string;
+  label: string;
+  pattern: string;
+  direction: Direction;
+  count: number;
+  total: Paise;
+  first: string;
+  last: string;
+  samples: string[];
+  txn_ids: number[];
+  category: string;
+}
+
+export interface ReviewSummary {
+  uncategorized: number;
+  uncategorized_groups: number;
+  guessed: number;
+  guessed_groups: number;
 }
 
 export interface Scope {
@@ -180,6 +204,7 @@ export interface TxnQuery {
   kind: CatKind | null;
   direction: Direction | null;
   month: string | null;
+  source?: CatSource | null;
   sort: string;
   page: number;
   page_size: number;
@@ -252,6 +277,11 @@ export const api = {
   setCategory: (ids: number[], category: string) => invoke<number>("set_category", { ids, category }),
   resetCategory: (ids: number[]) => invoke<number>("reset_category", { ids }),
   setNote: (id: number, note: string) => invoke<void>("set_note", { id, note }),
+
+  reviewSummary: () => invoke<ReviewSummary>("review_summary"),
+  reviewGroups: (guessed: boolean) => invoke<ReviewGroup[]>("review_groups", { guessed }),
+  assignReviewGroup: (ids: number[], category: string, pattern: string | null, direction: Direction | null) =>
+    invoke<number>("assign_review_group", { ids, category, pattern, direction }),
 
   scopeOptions: () => invoke<ScopeOption[]>("scope_options"),
   dashboard: (scope: Scope) => invoke<Dashboard>("dashboard", { scope }),

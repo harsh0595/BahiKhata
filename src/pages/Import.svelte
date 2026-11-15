@@ -76,7 +76,10 @@
       preview = null;
       await app.changed();
       await loadHistory();
-      next();
+      if (!queue.length && app.review.uncategorized > 0) {
+        app.info(`Imported. ${app.review.uncategorized} transactions need a category; please review them.`);
+        app.page = "review";
+      } else next();
     } catch (e) {
       error = String(e);
     } finally {

@@ -8,7 +8,12 @@ money goes. It needs no internet access. All data stays on the PC in a password-
   automatically. PDF import is planned.
 - Categorises transactions offline, using rules plus parsing of UPI, NEFT, IMPS, POS, ATM and ACH narrations.
   When you correct a category, the app offers to turn it into a rule.
-- Detects transfers between your own accounts and leaves them out of income and expense.
+- Guesses the rest: small UPI payments (up to ₹300 by default, adjustable in Settings) count as Groceries, and a
+  payee you have categorised before gets the same category again. Guesses are marked so you can check them.
+- **Review** page: transactions the app could not categorise are grouped by payee. Pick a category once and tick
+  "Remember" so future payments to that payee are categorised automatically.
+- Detects transfers between your own accounts, payments to your own name and credit-card bill payments, and leaves
+  them out of income and expense. A failed payment and its reversal cancel each other out.
 - Can combine several accounts, but only when they have the same holder.
 - Dashboard: income, expenses, investments, net savings and savings rate; a monthly trend; a category donut and
   category-by-month chart; top payees; recurring payments. Click any chart or list to see the transactions behind it.

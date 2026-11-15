@@ -11,6 +11,7 @@
   import Categories from "./pages/Categories.svelte";
   import SettingsPage from "./pages/Settings.svelte";
   import Report from "./pages/Report.svelte";
+  import Review from "./pages/Review.svelte";
 
   let ready = $state(false);
   let exists = $state(false);
@@ -21,6 +22,7 @@
   const NAV: { id: Page; label: string; icon: string }[] = [
     { id: "dashboard", label: "Dashboard", icon: "▦" },
     { id: "transactions", label: "Transactions", icon: "≡" },
+    { id: "review", label: "Review", icon: "✎" },
     { id: "report", label: "Report", icon: "⎙" },
     { id: "import", label: "Import statement", icon: "⇪" },
     { id: "accounts", label: "Accounts", icon: "◫" },
@@ -83,6 +85,7 @@
       {#each NAV as n (n.id)}
         <button class:active={app.page === n.id} onclick={() => (app.page = n.id)}>
           <span class="icon">{n.icon}</span>{n.label}
+          {#if n.id === "review" && app.review.uncategorized_groups > 0}<span class="badge">{app.review.uncategorized_groups}</span>{/if}
         </button>
       {/each}
       <div class="spacer"></div>
@@ -98,6 +101,8 @@
           <Dashboard />
         {:else if app.page === "transactions"}
           <Transactions />
+        {:else if app.page === "review"}
+          <Review />
         {:else if app.page === "report"}
           <Report />
         {:else if app.page === "import"}
@@ -158,6 +163,16 @@
   nav button.active {
     background: rgba(255, 255, 255, 0.16);
     color: #fff;
+  }
+
+  .badge {
+    float: right;
+    background: #ffb300;
+    color: #1f2547;
+    border-radius: 10px;
+    padding: 0 7px;
+    font-size: 12px;
+    font-weight: 600;
   }
 
   .icon {

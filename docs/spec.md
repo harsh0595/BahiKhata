@@ -34,9 +34,19 @@ income/expense dashboard. No internet access is required or used.
 - Expense: Groceries, Food & Dining, Fuel, Transport, Travel, Shopping, Entertainment & Subscriptions, Healthcare,
   Rent, Utilities & Bills, Education, Insurance, EMI & Loans, Investments, Cash Withdrawal, Bank Fees & Charges, Other.
 - Income: Salary, Interest, Dividends, Refunds & Cashback, Other Income.
-- Excluded: Own-account Transfer, Credit Card Bill Payment.
+- Also: Taxes, Gifts & Donations, Family & Friends (expense).
+- Excluded: Own-account Transfer, Credit Card Bill Payment, Reversed / Failed Payment.
 - Categorisation is offline and rule-based (keywords, merchant names, UPI VPA/narration parsing).
   Changing a transaction's category offers to create a rule, so the app learns.
+- Order: user rules → payment to the holder's own name (own transfer) → card-bill payment → built-in keywords.
+  Anything left is guessed: a payee previously categorised by a rule or by the user gets the same category;
+  otherwise a UPI debit up to the small-UPI limit (default ₹300, Settings) gets the small-UPI category (default
+  Groceries; street vegetable/fruit vendors). Auto guesses never feed the payee history.
+- A debit and a same-amount credit on the same account within 7 days that share a reference number are both marked
+  Reversed / Failed Payment.
+- Review page: uncategorised transactions grouped by payee (and a second tab for auto guesses). Assigning a
+  category from the fixed list can also create a rule for the payee. The app opens Review after an import when
+  anything is left uncategorised.
 - Investments are shown separately by default (Income − Expenses − Investments = Net savings).
   A checkbox switches to counting Investments as an expense.
 
@@ -46,7 +56,7 @@ income/expense dashboard. No internet access is required or used.
 3. Category donut; clicking drills down to transactions.
 4. Category-by-month stacked chart.
 5. Top merchants; auto-detected recurring payments (subscriptions, EMIs, SIPs, rent).
-6. Transactions table: search, filter, edit category (offers a rule).
+6. Transactions table: search, filter (incl. by how it was categorised), edit category (offers a rule).
 7. Filters: date range, account, "count investments as expense".
 8. Export of reports to Excel and PDF.
 

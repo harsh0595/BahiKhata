@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api, type CatKind, type Direction, type TxnPage, type TxnRow } from "../lib/api";
+  import { api, type CatKind, type CatSource, type Direction, type TxnPage, type TxnRow } from "../lib/api";
   import { inr, dmy, monthLabel, KIND_LABEL, SOURCE_LABEL } from "../lib/format";
   import { app } from "../lib/state.svelte";
 
@@ -10,6 +10,7 @@
   let kind = $state<CatKind | null>(app.txnFilter.kind as CatKind | null);
   let month = $state<string | null>(app.txnFilter.month);
   let direction = $state<Direction | null>(null);
+  let source = $state<CatSource | null>(app.txnFilter.source ?? null);
   let sort = $state("date_desc");
   let pageNo = $state(0);
   let data = $state.raw<TxnPage | null>(null);
@@ -28,6 +29,7 @@
     category = f.category;
     kind = f.kind as CatKind | null;
     month = f.month;
+    source = f.source ?? null;
     direction = null;
     pageNo = 0;
   });
@@ -54,6 +56,7 @@
         kind,
         direction,
         month,
+        source,
         sort,
         page: pageNo,
         page_size: PAGE_SIZE,
@@ -65,12 +68,12 @@
   }
 
   $effect(() => {
-    void [app.scope, category, kind, direction, month, sort];
+    void [app.scope, category, kind, direction, month, source, sort];
     pageNo = 0;
   });
 
   $effect(() => {
-    void [app.scope, app.version, debounced, category, kind, direction, month, sort, pageNo];
+    void [app.scope, app.version, debounced, category, kind, direction, month, source, sort, pageNo];
     load();
   });
 
@@ -78,7 +81,7 @@
   const sortedCats = $derived([...app.categories].sort((a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name)));
 
   function clearFilters() {
-    app.txnFilter = { category: null, kind: null, month: null, search: "" };
+    app.txnFilter = { category: null, kind: null, month: null, search: "", source: null };
     sort = "date_desc";
   }
 
@@ -187,6 +190,14 @@
     <option value="debit">Money out</option>
     <option value="credit">Money in</option>
   </select>
+  <select bind:value={source}>
+    <option value={null}>Any category source</option>
+    <option value="default">Not categorised</option>
+    <option value="auto">Auto-guessed</option>
+    <option value="rule">Matched a rule</option>
+    <option value="user">Set by you</option>
+    <option value="transfer">Transfers &amp; reversals</option>
+  </select>
   {#if month}
     <span class="chip">{monthLabel(month)} <button class="link" onclick={() => (month = null)}>×</button></span>
   {/if}
@@ -265,7 +276,9 @@
               {#if t.source === "user"}
                 <button class="link small" title="Let the rules decide again" onclick={() => resetCat(t)}>↺</button>
               {:else if t.source === "transfer"}
-                <div class="muted small">auto-matched transfer</div>
+                <div class="muted small">{t.category === "reversal" ? "payment and its reversal" : "auto-matched transfer"}</div>
+              {:else if t.source === "auto"}
+                <div class="muted small">auto-guessed</div>
               {/if}
             </td>
           </tr>
