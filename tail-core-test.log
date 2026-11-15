@@ -1,0 +1,62 @@
+[1m[92m    Updating[0m crates.io index
+[1m[92m   Compiling[0m bk-core v0.1.0 (D:\a\BahiKhata\BahiKhata\core)
+[1m[93mwarning[0m[1m[97m: unused dependency `serde_json`[0m
+ [1m[96m--> [0mCargo.toml:9:1
+  [1m[96m|[0m
+[1m[96m9[0m [1m[96m|[0m serde_json = "1"
+  [1m[96m|[0m [1m[93m^^^^^^^^^^^^^^^^[0m
+  [1m[96m|[0m
+  [1m[96m= [0m[1m[97mnote[0m: `cargo::unused_dependencies` is set to `warn` by default
+[1m[96mhelp[0m: consider removing the dependency on `serde_json`
+[1m[93mwarning[0m: `bk-core` (manifest) generated 1 warning
+[1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 11.76s
+[1m[92m     Running[0m unittests src\lib.rs (core\target\debug\build\bk-core/782aa767c0c5252a\out\bk_core-782aa767c0c5252a.exe)
+
+running 38 tests
+test categorize::tests::boundaries ... ok
+test categorize::tests::card_bill_and_self_name ... ok
+test analytics::tests::totals_and_recurring ... ok
+test analytics::tests::query_filters ... ok
+test categorize::tests::builtins ... ok
+test categorize::tests::user_rules_win ... ok
+test holder::tests::grouping_and_scope ... ok
+test holder::tests::names ... ok
+test holder::tests::pan_rules ... ok
+test holder::tests::self_name ... ok
+test import::grid::tests::cell_wraps ... ok
+test import::grid::tests::csv_and_tsv ... ok
+test import::grid::tests::utf16 ... ok
+test import::grid::tests::html_and_pdf ... ok
+test import::tests::no_table ... ok
+test categorize::tests::small_upi_and_history ... ok
+test import::tests::sbi_tsv ... ok
+test money::tests::amounts ... ok
+test money::tests::dates ... ok
+test money::tests::inr_format ... ok
+test narration::tests::hdfc_upi ... ok
+test narration::tests::neft_pos_atm_ach ... ok
+test narration::tests::plain_text_and_reference_channel ... ok
+test import::tests::hdfc_csv ... ok
+test import::tests::signed_amount_column_and_balance_inference ... ok
+test narration::tests::sbi_upi ... ok
+test store::tests::holder_required_when_missing ... ok
+test narration::tests::sbi_real_format ... ok
+test store::tests::reversed_payment_excluded ... ok
+test store::tests::import_twice_is_deduplicated ... ok
+test store::tests::review_and_assign ... ok
+test store::tests::same_day_repeats_kept ... ok
+test store::tests::transfers_paired_only_for_same_holder ... ok
+test store::tests::rules_and_categories ... ok
+test vault::tests::roundtrip_and_wrong_password ... ok
+test vault::tests::tamper_detected ... ok
+test export::tests::workbook_is_valid_zip_and_readable ... ok
+test vault::tests::atomic_write_keeps_backup ... ok
+
+test result: ok. 38 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+[1m[92m   Doc-tests[0m bk_core
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

@@ -1,0 +1,13 @@
+run: 9
+sha: b44b02d260c14eceddb16fdf243445e8e219d6b1
+npm: success
+core_tests: success
+frontend_check: success
+build: success
+release: success
+job: success
+version: 0.1.9
+installer: BahiKhata-0.1.9-setup.exe (2806431 bytes) sha256 b924cbed5811e53fb1636323a34370f2a5c66014e0dbfbd10cb3d8522da74b51
+tests: test result: ok. 38 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+tests: test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+time: 2026-11-15T04:56:53Z
