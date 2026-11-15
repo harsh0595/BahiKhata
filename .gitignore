@@ -1,0 +1,11 @@
+node_modules/
+dist/
+target/
+src-tauri/gen/
+src-tauri/icons/
+*.log
+.vscode/
+.idea/
+# Never commit real statements or vault files
+*.bkv
+samples-private/

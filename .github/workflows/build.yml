@@ -1,0 +1,130 @@
+name: Build & Release
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            core -> target
+            src-tauri -> target
+
+      - name: Install npm packages
+        id: npm
+        run: |
+          set -o pipefail
+          if [ -f package-lock.json ]; then npm ci 2>&1 | tee npm.log; else npm install 2>&1 | tee npm.log; fi
+
+      - name: Core tests
+        id: coretests
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          cargo test --manifest-path core/Cargo.toml --no-fail-fast 2>&1 | tee core-test.log
+
+      - name: Frontend check
+        id: fecheck
+        if: ${{ !cancelled() && steps.npm.outcome == 'success' }}
+        run: |
+          set -o pipefail
+          npm run check 2>&1 | tee fe-check.log
+
+      - name: Build installer
+        id: build
+        if: ${{ !cancelled() && steps.coretests.outcome == 'success' && steps.fecheck.outcome == 'success' }}
+        run: |
+          set -o pipefail
+          VERSION="0.1.${{ github.run_number }}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          npx tauri icon app-icon.svg 2>&1 | tee icon.log
+          npx tauri build --bundles nsis --config "{\"version\":\"$VERSION\"}" 2>&1 | tee build.log
+
+      - name: Publish GitHub Release
+        id: release
+        if: ${{ steps.build.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+        run: |
+          EXE="$(ls src-tauri/target/release/bundle/nsis/*-setup.exe | head -n 1)"
+          OUT="BahiKhata-$VERSION-setup.exe"
+          cp "$EXE" "$OUT"
+          SHA="$(sha256sum "$OUT" | cut -d' ' -f1)"
+          SIZE="$(stat -c %s "$OUT")"
+          echo "INSTALLER=$OUT ($SIZE bytes) sha256 $SHA" >> "$GITHUB_ENV"
+          {
+            echo "Commit: ${{ github.sha }}"
+            echo ""
+            echo "$COMMIT_MSG"
+            echo ""
+            echo "Installer SHA-256: $SHA"
+          } > notes.md
+          gh release create "v$VERSION" "$OUT" \
+            --title "Bahi-Khata $VERSION" \
+            --notes-file notes.md \
+            --target "${{ github.sha }}"
+
+      - name: Report result to ci-results branch
+        if: always()
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          OUT="$RUNNER_TEMP/report"
+          mkdir -p "$OUT"
+          W="$GITHUB_WORKSPACE"
+          {
+            echo "run: ${{ github.run_number }}"
+            echo "sha: ${{ github.sha }}"
+            echo "npm: ${{ steps.npm.outcome }}"
+            echo "core_tests: ${{ steps.coretests.outcome }}"
+            echo "frontend_check: ${{ steps.fecheck.outcome }}"
+            echo "build: ${{ steps.build.outcome }}"
+            echo "release: ${{ steps.release.outcome }}"
+            echo "job: ${{ job.status }}"
+            echo "version: ${VERSION:-none}"
+            echo "installer: ${INSTALLER:-none}"
+            grep -h "test result:" "$W/core-test.log" 2>/dev/null | sed 's/^/tests: /'
+            echo "time: $(date -u +%FT%TZ)"
+          } > "$OUT/status.txt"
+          for f in npm.log core-test.log fe-check.log icon.log build.log; do
+            if [ -f "$W/$f" ]; then tail -n 300 "$W/$f" > "$OUT/tail-$f"; fi
+          done
+          grep -nE 'error(\[E[0-9]+\])?:|Error:|error TS|panicked|FAILED|failed|^warning: unused' "$W"/*.log 2>/dev/null | head -n 300 > "$OUT/errors.log" || true
+          cp "$W/package-lock.json" "$OUT/" 2>/dev/null || true
+          cp "$W/core/Cargo.lock" "$OUT/core-Cargo.lock" 2>/dev/null || true
+          cp "$W/src-tauri/Cargo.lock" "$OUT/src-tauri-Cargo.lock" 2>/dev/null || true
+          cd "$OUT"
+          git init -q -b ci-results
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -qm "CI run ${{ github.run_number }}: ${{ job.status }}"
+          git push -qf "https://x-access-token:${TOKEN}@github.com/${{ github.repository }}.git" HEAD:ci-results
